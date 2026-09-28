@@ -105,6 +105,7 @@ db-explorer/
 | `get_table_stats` | Per-column null counts, distinct values, min/max |
 | `get_indexes` | Shows indexes on a table |
 | `get_relationships` | Maps all foreign keys across the whole database |
+| `get_server_info` | Shows DB type, table count, and connection status |
 
 ## License
 

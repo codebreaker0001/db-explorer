@@ -26,7 +26,7 @@ def create_database():
 
     print("Creating tables...")
 
-    # ─ ─ ─ Table 1: categories ─ ─ ─
+    # ─── Table 1: categories ───
     # Simple lookup table for product categories
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS categories (
@@ -36,7 +36,7 @@ def create_database():
         )
     """)
 
-    # ─ ─ ─ Table 2: customers ─ ─ ─
+    # ─── Table 2: customers ───
     # People who buy things from our store
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS customers (

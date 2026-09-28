@@ -26,6 +26,8 @@ THE FLOW:
 """
 
 import asyncio
+import csv
+import io
 import logging
 import os
 import re
@@ -348,6 +350,209 @@ async def get_table_stats(table_name: str) -> str:
     lines.append("|--------|-------|--------|----------|-----|-----|")
     for s in stats:
         lines.append(f"| `{s['column']}` | {s['nulls']} | {s['null_pct']}% | {s['distinct']} | {s['min']} | {s['max']} |")
+
+    return "\n".join(lines)
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# TOOL 6: get_indexes
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+@mcp.tool()
+async def get_indexes(table_name: str) -> str:
+    """Show indexes on a table.
+
+    Indexes speed up queries by letting the database skip full table scans.
+    Use this alongside `explain_query` to understand query performance —
+    if a query is slow and there's no index on the filtered column, that's why.
+
+    Args:
+        table_name: The name of the table to inspect
+    """
+    await ensure_connected()
+
+    try:
+        indexes = await schema_inspector.get_indexes(table_name)
+    except Exception as e:
+        return f"Error: Could not inspect table '{table_name}'.\n\nDetails: {e}"
+
+    if not indexes:
+        return f"No indexes found on `{table_name}` (besides the primary key, which is implicit)."
+
+    lines = [f"## Indexes on `{table_name}`", ""]
+    lines.append("| Index Name | Columns | Unique |")
+    lines.append("|-----------|---------|--------|")
+    for idx in indexes:
+        cols = ", ".join(idx["columns"])
+        unique = "YES" if idx["unique"] else "NO"
+        lines.append(f"| `{idx['name']}` | {cols} | {unique} |")
+
+    return "\n".join(lines)
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# TOOL 7: get_relationships
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+@mcp.tool()
+async def get_relationships() -> str:
+    """Show ALL foreign key relationships across the entire database.
+
+    Returns a map of every table-to-table link. Use this to understand
+    how tables connect before writing JOIN queries. Think of it as the
+    database's wiring diagram.
+    """
+    await ensure_connected()
+
+    tables = await schema_inspector.list_tables()
+    all_fks = []
+
+    for table in tables:
+        try:
+            fks = await schema_inspector.get_foreign_keys(table["name"])
+            for fk in fks:
+                all_fks.append({
+                    "from_table": table["name"],
+                    "from_column": fk["column"],
+                    "to_table": fk["references_table"],
+                    "to_column": fk["references_column"],
+                })
+        except Exception:
+            pass  # Skip tables we can't inspect
+
+    if not all_fks:
+        return "No foreign key relationships found in the database."
+
+    lines = ["## Database Relationships", ""]
+    lines.append("| From | → | To |")
+    lines.append("|------|---|-----|")
+    for fk in all_fks:
+        lines.append(
+            f"| `{fk['from_table']}.{fk['from_column']}` | → | `{fk['to_table']}.{fk['to_column']}` |"
+        )
+
+    lines.append(f"\n**{len(all_fks)} relationships across {len(tables)} tables**")
+    return "\n".join(lines)
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# TOOL 8: get_server_info
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+@mcp.tool()
+async def get_server_info() -> str:
+    """Show what database this server is connected to.
+
+    Returns the database type (SQLite/PostgreSQL/MySQL), connection status,
+    and a quick summary of tables. Useful as a first call to orient yourself.
+    """
+    await ensure_connected()
+
+    tables = await schema_inspector.list_tables()
+    total_rows = sum(t["row_count"] for t in tables if t["row_count"] >= 0)
+
+    lines = [
+        "## DB Explorer — Connected",
+        f"- **Database type:** {connection_manager.db_type}",
+        f"- **Tables:** {len(tables)}",
+        f"- **Total rows:** {total_rows:,}",
+        f"- **Row limit:** {MAX_ROWS} per query",
+        f"- **Timeout:** {QUERY_TIMEOUT}s",
+        "",
+        "**Available tools:** list_tables, describe_table, run_query, "
+        "explain_query, get_table_stats, get_indexes, get_relationships, "
+        "export_csv, generate_erd",
+    ]
+    return "\n".join(lines)
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# TOOL 9: export_csv
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+@mcp.tool()
+async def export_csv(sql: str, limit: int = 500) -> str:
+    """Run a read-only SQL query and return results as CSV text.
+
+    Same safety rules as run_query (SELECT only), but outputs CSV instead
+    of a markdown table. Useful when you need to save or process the data
+    in a spreadsheet or other tool.
+
+    Args:
+        sql: The SQL SELECT query to run
+        limit: Maximum rows to return (default 500, max 500)
+    """
+    await ensure_connected()
+
+    error = _validate_sql(sql)
+    if error:
+        return error
+
+    limit = min(limit, MAX_ROWS)
+    sql_lower = sql.strip().lower()
+    if "limit" not in sql_lower:
+        sql = f"{sql.rstrip().rstrip(';')} LIMIT {limit}"
+
+    try:
+        async with connection_manager.engine.connect() as conn:
+            result = await asyncio.wait_for(
+                conn.execute(text(sql)),
+                timeout=QUERY_TIMEOUT,
+            )
+            rows = result.fetchall()
+            columns = list(result.keys())
+    except asyncio.TimeoutError:
+        return f"Query timed out after {QUERY_TIMEOUT}s."
+    except Exception as e:
+        return f"Query error: {e}"
+
+    if not rows:
+        return "Query returned 0 rows."
+
+    # ponytail: stdlib csv module, no pandas needed
+    buf = io.StringIO()
+    writer = csv.writer(buf)
+    writer.writerow(columns)
+    for row in rows:
+        writer.writerow(row)
+
+    return buf.getvalue()
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# TOOL 10: generate_erd
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+@mcp.tool()
+async def generate_erd() -> str:
+    """Generate a Mermaid ERD (Entity-Relationship Diagram) of the full database.
+
+    Returns Mermaid syntax that visualizes every table, its columns, and
+    the foreign key relationships between tables. Paste the output into
+    any Mermaid renderer to see the diagram.
+    """
+    await ensure_connected()
+
+    tables = await schema_inspector.list_tables()
+    lines = ["erDiagram"]
+
+    # Map SQL types to Mermaid-friendly short names
+    for table in tables:
+        info = await schema_inspector.describe_table(table["name"])
+        lines.append(f"    {table['name']} {{")
+        for col in info["columns"]:
+            # Mermaid ERD format: type name PK/FK
+            col_type = str(col["type"]).split("(")[0].lower()  # VARCHAR(255) -> varchar
+            marker = " PK" if col["primary_key"] else ""
+            lines.append(f"        {col_type} {col['name']}{marker}")
+        lines.append("    }")
+
+    # Add relationships
+    for table in tables:
+        try:
+            fks = await schema_inspector.get_foreign_keys(table["name"])
+            for fk in fks:
+                # ||--o{ means "one to many"
+                lines.append(
+                    f"    {fk['references_table']} ||--o{{ {table['name']} : \"{fk['column']}\""
+                )
+        except Exception:
+            pass
 
     return "\n".join(lines)
 

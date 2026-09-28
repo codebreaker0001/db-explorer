@@ -60,17 +60,17 @@ class ConnectionManager:
         """
         if url.startswith("sqlite://"):
             self._db_type = "sqlite"
-            # sqlite:///path  -->  sqlite+aiosqlite:///path
             return url.replace("sqlite://", "sqlite+aiosqlite://", 1)
 
-        elif url.startswith("postgresql://"):
+        elif url.startswith(("postgresql://", "postgres://")):
             self._db_type = "postgresql"
-            # postgresql://user:pass@host/db  -->  postgresql+asyncpg://user:pass@host/db
+            # postgres:// is a common alias (Heroku, Railway, etc.)
+            if url.startswith("postgres://"):
+                url = "postgresql://" + url[len("postgres://"):]
             return url.replace("postgresql://", "postgresql+asyncpg://", 1)
 
         elif url.startswith("mysql://"):
             self._db_type = "mysql"
-            # mysql://user:pass@host/db  -->  mysql+aiomysql://user:pass@host/db
             return url.replace("mysql://", "mysql+aiomysql://", 1)
 
         else:
@@ -117,14 +117,25 @@ class ConnectionManager:
         if self._engine is not None:
             await self._engine.dispose()
 
-        # Create the engine (establish the connection)
-        # - echo=False: don't print every SQL query to the console
-        # - pool_pre_ping=True: check if connection is alive before using it
-        self._engine = create_async_engine(
-            async_url,
-            echo=False,
-            pool_pre_ping=True,
-        )
+        # Create the engine
+        _driver_install_hints = {
+            "postgresql": "pip install asyncpg",
+            "mysql": "pip install aiomysql",
+        }
+        try:
+            self._engine = create_async_engine(
+                async_url,
+                echo=False,
+                pool_pre_ping=True,
+            )
+        except Exception as e:
+            hint = _driver_install_hints.get(self._db_type)
+            if hint and "no module" in str(e).lower():
+                raise RuntimeError(
+                    f"Async driver not installed for {self._db_type}. "
+                    f"Run: {hint}"
+                ) from e
+            raise
 
         logger.info(f"Connected to {self._db_type} database")
         return self._engine

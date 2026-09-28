@@ -185,3 +185,35 @@ class SchemaInspector:
                     })
 
             return foreign_keys
+
+    async def get_indexes(self, table_name: str, schema: str | None = None) -> list[dict]:
+        """
+        Get indexes on a table.
+
+        Indexes are like a book's index — they help the database find rows
+        faster without scanning every single row. Knowing what's indexed
+        helps you write faster queries.
+
+        Returns:
+        [
+            {
+                "name": "ix_orders_customer_id",
+                "columns": ["customer_id"],
+                "unique": False,
+            }
+        ]
+        """
+        async with self._engine.connect() as conn:
+            idx_info = await conn.run_sync(
+                lambda sync_conn: inspect(sync_conn).get_indexes(
+                    table_name, schema=schema
+                )
+            )
+            return [
+                {
+                    "name": idx.get("name", "unnamed"),
+                    "columns": idx.get("column_names", []),
+                    "unique": idx.get("unique", False),
+                }
+                for idx in idx_info
+            ]
