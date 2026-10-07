@@ -7,7 +7,7 @@ An MCP (Model Context Protocol) server that lets Claude explore and query your S
 Connect this server to Claude Desktop (or any MCP client) and Claude can:
 - **List all tables** in your database with row counts
 - **Describe table structure** — columns, types, primary keys, foreign keys
-- *(Coming soon)* Run read-only SQL queries, explain query plans, and more
+- Run read-only SQL queries, explain query plans, and more
 
 ## Supported Databases
 
@@ -62,7 +62,9 @@ Add this:
     "db-explorer": {
       "command": "python",
       "args": ["-m", "db_explorer.server"],
-      "cwd": "/absolute/path/to/db-explorer"
+      "env": {
+        "DATABASE_URL": ""
+      }
     }
   }
 }
@@ -107,6 +109,3 @@ db-explorer/
 | `get_relationships` | Maps all foreign keys across the whole database |
 | `get_server_info` | Shows DB type, table count, and connection status |
 
-## License
-
-MIT
